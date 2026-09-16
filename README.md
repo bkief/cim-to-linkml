@@ -1,7 +1,7 @@
 ## Installation
-Make sure you have Python (≥ 3.11) and Poetry installed.
+Make sure you have Python (≥ 3.11) and uv installed.
 
-Run `poetry install` to have it set up a virtual environment for you with the necessary dependencies installed and configuration taken care of.
+Run `uv sync` to have it set up a virtual environment for you with the necessary dependencies installed and configuration taken care of.
 
 ## Running `cim2linkml`
 
@@ -9,16 +9,17 @@ Run `poetry install` to have it set up a virtual environment for you with the ne
 Activate your virtual environment, and you should be able to use the `cim2linkml` script.
 
 ```
-$ poetry shell
+$ .venv\Scripts\activate  # On Windows
+$ source .venv/bin/activate # On Unix/macOS
 $ cim2linkml --help
 # ...
 ```
 
-#### Using `poetry run`
+#### Using `uv run`
 You can also run the script inside the virtual environment without activating it.
 
 ```
-$ poetry run cim2linkml --help
+$ uv run cim2linkml --help
 # ...
 ```
 
