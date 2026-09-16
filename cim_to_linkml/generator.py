@@ -234,6 +234,8 @@ def _map_primitive_data_type(val):
             "Date": "date",
             "Time": "time",
             "Duration": "integer",
+            "IRI": "uri",
+            "URI": "uri",
         }[val]
     except KeyError:
         raise TypeError(f"Data type `{val}` is not a CIM Primitive.")

@@ -3,3 +3,6 @@
 *.~
 schemas/
 sandbox/
+
+*.qea
+*.qeax
