@@ -123,6 +123,10 @@ def generate_class(uml_class: uml_model.Class, uml_project: uml_model.Project) -
     if uml_class.stereotype == uml_model.ClassStereotype.CIMDATATYPE:
         annotations["represents_cim_data_type"] = True
 
+    version = _get_package_version(uml_class.package, uml_project)
+    if version:
+        annotations["cim_version"] = version
+
     class_ = linkml_model.Class(
         name=uml_class.name,
         class_uri=_generate_curie(uml_class.name, linkml_model.CIM_PREFIX),
@@ -300,3 +304,17 @@ def _is_slot_required(lower_bound: uml_model.CardinalityValue) -> bool:
 
 def _is_slot_multivalued(upper_bound: uml_model.CardinalityValue) -> bool:
     return upper_bound == "*" or upper_bound > 1
+
+@lru_cache(maxsize=1942)
+def _get_package_version(package_id, uml_project) -> Optional[str]:
+    classes_in_pkg = [c for c in uml_project.classes.by_id.values() if c.package == package_id]
+    for c in classes_in_pkg:
+        if 'CIMVersion' in c.name:
+            for attr in c.attributes:
+                if attr.name == 'version' and attr.default:
+                    return attr.default
+    pkg = uml_project.packages.by_id.get(package_id)
+    if pkg and pkg.parent:
+        return _get_package_version(pkg.parent, uml_project)
+    return None
+
