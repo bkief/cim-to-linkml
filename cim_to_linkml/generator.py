@@ -127,6 +127,10 @@ def generate_class(uml_class: uml_model.Class, uml_project: uml_model.Project) -
     if version:
         annotations["cim_version"] = version
 
+    spec = _get_package_specification(uml_class.package, uml_project)
+    if spec:
+        annotations["cim_specification"] = spec
+
     class_ = linkml_model.Class(
         name=uml_class.name,
         class_uri=_generate_curie(uml_class.name, linkml_model.CIM_PREFIX),
@@ -317,4 +321,16 @@ def _get_package_version(package_id, uml_project) -> Optional[str]:
     if pkg and pkg.parent:
         return _get_package_version(pkg.parent, uml_project)
     return None
+
+@lru_cache(maxsize=1942)
+def _get_package_specification(package_id, uml_project) -> Optional[str]:
+    qname = uml_project.packages.get_qualified_name(package_id)
+    if "IEC61970" in qname:
+        return "IEC 61970-301"
+    elif "IEC61968" in qname:
+        return "IEC 61968-11"
+    elif "IEC62325" in qname:
+        return "IEC 62325-301"
+    return None
+
 
