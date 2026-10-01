@@ -44,7 +44,12 @@ def parse_uml_project(
     uml_classes = uml_model.Classes(
         {parse_uml_class(list(class_rows)) for _, class_rows in groupby(uml_class_results, itemgetter("class_id"))}
     )
-    uml_relations = uml_model.Relations({parse_uml_relation(rel_row) for rel_row in uml_relation_results})
+    uml_relations = set()
+    for rel_row in uml_relation_results:
+        rel = parse_uml_relation(rel_row)
+        if rel.source_class in uml_classes.by_id and rel.dest_class in uml_classes.by_id:
+            uml_relations.add(rel)
+    uml_relations = uml_model.Relations(uml_relations)
 
     uml_project = uml_model.Project(classes=uml_classes, packages=uml_packages, relations=uml_relations)
 

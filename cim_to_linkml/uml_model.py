@@ -6,9 +6,9 @@ from itertools import groupby
 from operator import attrgetter, itemgetter
 from typing import Literal, NamedTuple, Optional
 
-ObjectID = int
-ConnectorID = int
-AttributeID = int
+ObjectID = int | str
+ConnectorID = int | str
+AttributeID = int | str
 AttributeName = str
 RelationName = str
 ClassName = str
@@ -111,15 +111,15 @@ class Classes:
 
     @cached_property
     def by_id(self):
-        return {c.id: c for c in sorted(self._data, key=attrgetter("id"))}
+        return {c.id: c for c in sorted(self._data, key=lambda x: str(x.id) if x.id is not None else "")}
 
     @cached_property
     def by_name(self):
-        key = attrgetter("name")
+        key = lambda x: str(x.name) if x.name is not None else ""
 
         classes_by_name = {}
         for name, classes in groupby(sorted(self._data, key=key), key=key):
-            classes = list(sorted(classes, key=attrgetter("id")))
+            classes = list(sorted(classes, key=lambda x: str(x.id) if x.id is not None else ""))
             class_ = classes[0]
             if len(classes) > 1:
                 print(
@@ -132,11 +132,11 @@ class Classes:
 
     @cached_property
     def by_package(self):
-        key = attrgetter("package")
+        key = lambda x: str(x.package) if x.package is not None else ""
 
         classes_by_package = {}
         for package_id, classes in groupby(sorted(self._data, key=key), key=key):
-            classes = list(sorted(classes, key=attrgetter("id")))
+            classes = list(sorted(classes, key=lambda x: str(x.id) if x.id is not None else ""))
             classes_by_package[package_id] = classes
 
         return classes_by_package
@@ -148,26 +148,26 @@ class Relations:
 
     @cached_property
     def by_id(self):
-        return {r.id: r for r in sorted(self._data, key=attrgetter("id"))}
+        return {r.id: r for r in sorted(self._data, key=lambda x: str(x.id) if x.id is not None else "")}
 
     @cached_property
     def by_source_class(self):
-        key = attrgetter("source_class")
+        key = lambda x: str(x.source_class) if x.source_class is not None else ""
 
         relations_by_source_class = {}
         for source_class, relations in groupby(sorted(self._data, key=key), key=key):
-            relations = list(sorted(relations, key=attrgetter("id")))
+            relations = list(sorted(relations, key=lambda x: str(x.id) if x.id is not None else ""))
             relations_by_source_class[source_class] = relations
 
         return relations_by_source_class
 
     @cached_property
     def by_dest_class(self):
-        key = attrgetter("dest_class")
+        key = lambda x: str(x.dest_class) if x.dest_class is not None else ""
 
         relations_by_dest_class = {}
         for dest_class, relations in groupby(sorted(self._data, key=key), key=key):
-            relations = list(sorted(relations, key=attrgetter("id")))
+            relations = list(sorted(relations, key=lambda x: str(x.id) if x.id is not None else ""))
             relations_by_dest_class[dest_class] = relations
 
         return relations_by_dest_class
@@ -179,7 +179,7 @@ class Packages:
 
     @cached_property
     def by_id(self):
-        return {p.id: p for p in sorted(self._data, key=attrgetter("id"))}
+        return {p.id: p for p in sorted(self._data, key=lambda x: str(x.id) if x.id is not None else "")}
 
     @cached_property
     def by_qualified_name(self):
@@ -192,16 +192,24 @@ class Packages:
     def is_leaf_package(self, qname: str):
         return len([qn for qn in self.by_qualified_name if qn.startswith(qname)]) == 1
 
-    def _get_package_path(self, start_pkg_id, package_path=None):
+    def _get_package_path(self, start_pkg_id, package_path=None, visited=None):
         if package_path is None:
             package_path = []
+        if visited is None:
+            visited = set()
 
-        package = self.by_id[start_pkg_id]
+        if start_pkg_id in visited:
+            return package_path  # Break cycle
+        visited.add(start_pkg_id)
 
-        if package.parent in (0, None):
+        package = self.by_id.get(start_pkg_id)
+        if not package:
             return package_path
 
-        return self._get_package_path(package.parent, [package.name] + package_path)
+        if package.parent in (0, None, "", str(package.id)):
+            return [package.name] + package_path
+
+        return self._get_package_path(package.parent, [package.name] + package_path, visited)
 
 
 class Project:

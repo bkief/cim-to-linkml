@@ -22,7 +22,7 @@ init_yaml_serializer()
 
 
 @click.command()
-@click.argument("cim_db", type=click.Path(exists=True, path_type=Path), nargs=1, metavar="QEA_FILE")
+@click.argument("cim_db", type=click.Path(exists=True, path_type=Path), nargs=1, metavar="CIM_MODEL")
 @click.option(
     "--package",
     "-p",
@@ -61,7 +61,7 @@ def cli(
     output_dir,
 ):
     """
-    Generates LinkML schemas from the supplied Sparx EA QEA database file.
+    Generates LinkML schemas from the supplied Sparx EA QEA database, XMI file, or RDF/OWL/TTL ontology.
 
 
     You can specify which packages in the UML model to generate schemas from
@@ -79,8 +79,18 @@ def cli(
 
     """
 
-    with sqlite3.connect(cim_db) as conn:
-        uml_project = parse_uml_project(*read_uml_project(conn))
+    if str(cim_db).lower().endswith(".qea"):
+        with sqlite3.connect(cim_db) as conn:
+            uml_project = parse_uml_project(*read_uml_project(conn))
+    elif str(cim_db).lower().endswith((".xml", ".xmi")):
+        from cim_to_linkml.read_xmi import read_xmi_project
+        uml_project = parse_uml_project(*read_xmi_project(str(cim_db)))
+    elif str(cim_db).lower().endswith((".rdf", ".owl", ".ttl")):
+        from cim_to_linkml.read_rdf import read_rdf_project
+        uml_project = read_rdf_project(str(cim_db))
+    else:
+        click.echo(f"Unsupported file format: {cim_db.suffix}. Supported formats are .qea, .xml, .xmi, .rdf, .owl, .ttl", err=True)
+        raise SystemExit(1)
 
     try:
         uml_package = uml_project.packages.by_qualified_name[package]

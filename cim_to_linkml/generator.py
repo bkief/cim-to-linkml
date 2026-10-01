@@ -166,11 +166,14 @@ def generate_enum_class(uml_enum: uml_model.Class, uml_project: uml_model.Projec
 def generate_slot_from_attribute(
     uml_attr: uml_model.Attribute, uml_class: uml_model.Class, uml_project: uml_model.Project
 ) -> linkml_model.Slot:
-    type_class = uml_project.classes.by_name[uml_attr.type]
-    if type_class.stereotype == uml_model.ClassStereotype.PRIMITIVE:
-        range_ = _map_primitive_data_type(uml_attr.type)
-    else:
+    type_name = uml_attr.type or "String"
+    type_class = uml_project.classes.by_name.get(type_name)
+    if type_class and type_class.stereotype == uml_model.ClassStereotype.PRIMITIVE:
+        range_ = _map_primitive_data_type(type_name)
+    elif type_class:
         range_ = type_class.name
+    else:
+        range_ = _map_primitive_data_type(type_name)
 
     return linkml_model.Slot(
         name=uml_attr.name,
@@ -277,7 +280,7 @@ def _get_attribute_types(uml_class: uml_model.Class, uml_project: uml_model.Proj
         class_
         for attr in uml_class.attributes
         if attr.type is not None
-        if (class_ := uml_project.classes.by_name[attr.type])
+        if (class_ := uml_project.classes.by_name.get(attr.type))
     )
 
     return type_classes
@@ -310,7 +313,12 @@ def _is_slot_multivalued(upper_bound: uml_model.CardinalityValue) -> bool:
     return upper_bound == "*" or upper_bound > 1
 
 @lru_cache(maxsize=1942)
-def _get_package_version(package_id, uml_project) -> Optional[str]:
+def _get_package_version(package_id, uml_project, visited=None) -> Optional[str]:
+    if visited is None:
+        visited = frozenset()
+    if package_id in visited:
+        return None
+    visited = visited.union({package_id})
     classes_in_pkg = [c for c in uml_project.classes.by_id.values() if c.package == package_id]
     for c in classes_in_pkg:
         if 'CIMVersion' in c.name:
@@ -318,8 +326,8 @@ def _get_package_version(package_id, uml_project) -> Optional[str]:
                 if attr.name == 'version' and attr.default:
                     return attr.default
     pkg = uml_project.packages.by_id.get(package_id)
-    if pkg and pkg.parent:
-        return _get_package_version(pkg.parent, uml_project)
+    if pkg and pkg.parent and pkg.parent not in (0, None, "", str(pkg.id)):
+        return _get_package_version(pkg.parent, uml_project, visited)
     return None
 
 @lru_cache(maxsize=1942)
