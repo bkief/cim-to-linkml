@@ -1,0 +1,36 @@
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix cims: <http://iec.ch/TC57/1999/rdf-schema-extensions-19990926#> .
+@prefix cim: <http://iec.ch/TC57/2013/CIM-schema-cim16#> .
+
+cim:Substation a owl:Class ;
+    rdfs:label "Substation" ;
+    rdfs:comment "A collection of equipment for purposes other than generation or utilization, through which electric energy in bulk is passed for the purposes of switching or modifying its characteristics." ;
+    cims:belongsToCategory cim:Package_Core ;
+    cims:stereotype "Concrete" .
+
+cim:Equipment a owl:Class ;
+    rdfs:label "Equipment" ;
+    rdfs:comment "The parts of a power system that are physical devices, electronic or mechanical." ;
+    cims:belongsToCategory cim:Package_Core .
+
+cim:Substation_Equipment a owl:ObjectProperty ;
+    rdfs:label "Equipment" ;
+    rdfs:comment "The equipment contained in this substation." ;
+    rdfs:domain cim:Substation ;
+    rdfs:range cim:Equipment ;
+    cims:multiplicity cims:M:0..n ;
+    cims:stereotype "Association" .
+
+cim:Substation_name a owl:DatatypeProperty ;
+    rdfs:label "name" ;
+    rdfs:comment "The name is any free text that this object is highly commonly known by." ;
+    rdfs:domain cim:Substation ;
+    rdfs:range <http://www.w3.org/2001/XMLSchema#string> ;
+    cims:multiplicity cims:M:1..1 ;
+    cims:stereotype "Attribute" .
+
+cim:Package_Core a owl:Class ;
+    rdfs:label "Core" ;
+    rdfs:comment "Contains the core PowerSystemResource and ConductingEquipment entities shared by all applications plus common collections of those entities." .

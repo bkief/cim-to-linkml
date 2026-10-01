@@ -226,5 +226,8 @@ __marimo__/
 schemas/
 sandbox/
 
-*.qea
-*.qeax
+scratch/
+
+# Decompressed test models (committed as .xz, expanded by tests/conftest.py)
+tests/data/**/*.qea
+tests/data/**/*.xmi
