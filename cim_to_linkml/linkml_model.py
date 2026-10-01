@@ -51,7 +51,7 @@ class Schema(NamedTuple):
     description: Optional[str] = None
     contributors: Optional[list[URI | CURIE]] = None
     created_by: Optional[URI | CURIE] = None
-    generation_date: Optional[datetime] = None
+    generation_date: Optional[str] = None  # ISO 8601; LinkML types it as a string.
     license: Optional[str] = None
     metamodel_version: Optional[str] = None
     imports: Optional[list[str]] = None

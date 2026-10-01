@@ -4,12 +4,14 @@ import os
 import sqlite3
 from itertools import chain
 from pathlib import Path
+from typing import Iterable, Optional
 
 import click
 
 from cim_to_linkml.generator import generate_schema
 from cim_to_linkml.parser import parse_uml_project
 from cim_to_linkml.read import read_uml_project
+import cim_to_linkml.uml_model as uml_model
 from cim_to_linkml.writer import init_yaml_serializer, write_schema
 
 LOG_FORMAT = "[%(asctime)s] [%(levelname)s] %(message)s"  # noqa
@@ -29,7 +31,7 @@ init_yaml_serializer()
     type=str,
     show_default=True,
     default="TC57CIM",
-    help="Fully qualified package name.",
+    help="Fully qualified package name, or a unique suffix of one (e.g. `IEC61970.Base.Core').",
 )
 @click.option(
     "--single-schema",
@@ -79,24 +81,28 @@ def cli(
 
     """
 
-    if str(cim_db).lower().endswith(".qea"):
+    if str(cim_db).lower().endswith((".qea", ".qeax")):
         with sqlite3.connect(cim_db) as conn:
             uml_project = parse_uml_project(*read_uml_project(conn))
     elif str(cim_db).lower().endswith((".xml", ".xmi")):
         from cim_to_linkml.read_xmi import read_xmi_project
         uml_project = parse_uml_project(*read_xmi_project(str(cim_db)))
-    elif str(cim_db).lower().endswith((".rdf", ".owl", ".ttl")):
+    elif str(cim_db).lower().endswith((".rdf", ".rdfs", ".owl", ".ttl")):
         from cim_to_linkml.read_rdf import read_rdf_project
         uml_project = read_rdf_project(str(cim_db))
     else:
-        click.echo(f"Unsupported file format: {cim_db.suffix}. Supported formats are .qea, .xml, .xmi, .rdf, .owl, .ttl", err=True)
+        click.echo(f"Unsupported file format: {cim_db.suffix}. Supported formats are .qea, .qeax, .xml, .xmi, .rdf, .rdfs, .owl, .ttl", err=True)
         raise SystemExit(1)
 
-    try:
-        uml_package = uml_project.packages.by_qualified_name[package]
-    except KeyError:
+    resolved_package = _resolve_package(package, uml_project.packages.by_qualified_name.keys())
+    if resolved_package is None:
+        available_pkgs = ", ".join(f"'{p}'" for p in sorted(uml_project.packages.by_qualified_name.keys()))
         click.echo(f"Ignoring unknown package: `{package}'.", err=True)
+        click.echo(f"Available packages: {available_pkgs}", err=True)
         raise SystemExit(1)
+    package = resolved_package
+
+    uml_package = uml_project.packages.by_qualified_name[package]
 
     if uml_project.packages.is_leaf_package(package):
         single_schema = True
@@ -106,7 +112,9 @@ def cli(
         uml_packages = [uml_package]
         single_schema = True
     else:
-        uml_packages = [p for qname, p in uml_project.packages.by_qualified_name.items() if qname.startswith(package)]
+        uml_packages = [
+            p for qname, p in uml_project.packages.by_qualified_name.items() if uml_model.is_package_or_subpackage(qname, package)
+        ]
 
     os.makedirs(output_dir, exist_ok=True)
 
@@ -133,6 +141,28 @@ def cli(
 
             os.makedirs(dir_path, exist_ok=True)
             write_schema(schema, out_file)
+
+
+def _resolve_package(package: str, qualified_names: Iterable[str]) -> Optional[str]:
+    """Resolves the user supplied package name to a qualified package name in the model.
+
+    An exact match wins. Otherwise a unique suffix match is accepted, so that e.g.
+    `TC57CIM.IEC61970' resolves to `Model.TC57CIM.IEC61970' in Enterprise Architect
+    exports, which nest everything under a `Model' root package. For models with a
+    single package (typically RDF/OWL profiles) the default `TC57CIM' resolves to it.
+    """
+    qualified_names = list(qualified_names)
+    if package in qualified_names:
+        return package
+
+    suffix_matches = [qn for qn in qualified_names if qn.endswith("." + package)]
+    if len(suffix_matches) == 1:
+        return suffix_matches[0]
+
+    if package == "TC57CIM" and len(qualified_names) == 1:
+        return qualified_names[0]
+
+    return None
 
 
 if __name__ == "__main__":

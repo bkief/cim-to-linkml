@@ -1,4 +1,5 @@
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Optional
 from urllib.parse import quote
@@ -9,6 +10,8 @@ import cim_to_linkml.uml_model as uml_model
 LINKML_METAMODEL_VERSION = "1.7.0"
 GITHUB_BASE_URL = "https://github.com/"
 GITHUB_REPO_URL = "https://github.com/bartkl/cim-to-linkml"
+
+logger = logging.getLogger(__name__)
 
 
 def generate_schema(
@@ -29,7 +32,7 @@ def generate_schema(
         description=uml_package.notes,
         contributors=["github:bartkl"],
         created_by=GITHUB_REPO_URL,
-        generation_date=datetime.now(),
+        generation_date=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         license="https://www.apache.org/licenses/LICENSE-2.0.txt",
         metamodel_version=LINKML_METAMODEL_VERSION,
         imports=["linkml:types"],
@@ -116,6 +119,7 @@ def generate_class(uml_class: uml_model.Class, uml_project: uml_model.Project) -
         slot
         for rel in uml_project.relations.by_dest_class.get(uml_class.id, [])
         if rel and rel.type != uml_model.RelationType.GENERALIZATION
+        if rel.bidirectional
         if (slot := generate_slot_from_relation(rel, uml_project, "dest->source"))
     )
 
@@ -173,14 +177,20 @@ def generate_slot_from_attribute(
     elif type_class:
         range_ = type_class.name
     else:
-        range_ = _map_primitive_data_type(type_name)
+        try:
+            range_ = _map_primitive_data_type(type_name)
+        except TypeError:
+            logger.warning(
+                f"Unknown data type `{type_name}' for attribute `{uml_class.name}.{uml_attr.name}'; using `string'."
+            )
+            range_ = "string"
 
     return linkml_model.Slot(
         name=uml_attr.name,
         range=range_,
         description=uml_attr.notes,
         required=_is_slot_required(uml_attr.lower_bound),
-        multivalued=_is_slot_multivalued(uml_attr.lower_bound),
+        multivalued=_is_slot_multivalued(uml_attr.upper_bound),
         slot_uri=_generate_curie(f"{uml_class.name}.{uml_attr.name}", linkml_model.CIM_PREFIX),
     )
 
@@ -233,23 +243,31 @@ def _generate_schema_id(uml_package: uml_model.Package, uml_project: uml_model.P
 
 
 def _map_primitive_data_type(val):
-    try:
-        return {
-            "Float": "float",
-            "Integer": "integer",
-            "DateTime": "date",
-            "String": "string",
-            "Boolean": "boolean",
-            "Decimal": "double",  # Is this right?
-            "MonthDay": "date",  # Is this right?
-            "Date": "date",
-            "Time": "time",
-            "Duration": "integer",
-            "IRI": "uri",
-            "URI": "uri",
-        }[val]
-    except KeyError:
-        raise TypeError(f"Data type `{val}` is not a CIM Primitive.")
+    if not val:
+        return "string"
+    mapping = {
+        "float": "float",
+        "integer": "integer",
+        "int": "integer",
+        "datetime": "datetime",
+        "string": "string",
+        "str": "string",
+        "boolean": "boolean",
+        "bool": "boolean",
+        "decimal": "decimal",
+        "double": "double",
+        "monthday": "string",  # xsd:gMonthDay (--MM-DD) has no LinkML equivalent.
+        "date": "date",
+        "time": "time",
+        "duration": "string",  # xsd:duration, e.g. `P1DT2H'.
+        "iri": "uri",
+        "uri": "uri",
+        "uuid": "string",
+    }
+    mapped = mapping.get(str(val).lower())
+    if mapped:
+        return mapped
+    raise TypeError(f"Data type `{val}` is not a CIM Primitive.")
 
 
 def _generate_curie(name: str, prefix: str) -> str:
@@ -275,7 +293,7 @@ def _get_super_class(uml_class: uml_model.Class, uml_project: uml_model.Project)
 
 
 @lru_cache(maxsize=1942)
-def _get_attribute_types(uml_class: uml_model.Class, uml_project: uml_model.Project) -> tuple[uml_model.Class]:
+def _get_attribute_types(uml_class: uml_model.Class, uml_project: uml_model.Project) -> tuple[uml_model.Class, ...]:
     type_classes = tuple(
         class_
         for attr in uml_class.attributes
@@ -287,20 +305,18 @@ def _get_attribute_types(uml_class: uml_model.Class, uml_project: uml_model.Proj
 
 
 @lru_cache(maxsize=1942)
-def _get_related_classes(uml_class: uml_model.Class, uml_project: uml_model.Project) -> tuple[uml_model.Class]:
-    from_classes = tuple()
-    to_classes = tuple()
-
-    for rel in uml_project.relations.by_id.values():
-        if rel.type == uml_model.RelationType.GENERALIZATION:
-            continue
-        match uml_class.id:
-            case rel.source_class:
-                dest_class = uml_project.classes.by_id[rel.dest_class]
-                to_classes = to_classes + (dest_class,)
-            case rel.dest_class:
-                source_class = uml_project.classes.by_id[rel.source_class]
-                from_classes = from_classes + (source_class,)
+def _get_related_classes(uml_class: uml_model.Class, uml_project: uml_model.Project) -> tuple[uml_model.Class, ...]:
+    from_classes = tuple(
+        uml_project.classes.by_id[rel.source_class]
+        for rel in uml_project.relations.by_dest_class.get(uml_class.id, [])
+        if rel.type != uml_model.RelationType.GENERALIZATION
+        if rel.source_class != uml_class.id
+    )
+    to_classes = tuple(
+        uml_project.classes.by_id[rel.dest_class]
+        for rel in uml_project.relations.by_source_class.get(uml_class.id, [])
+        if rel.type != uml_model.RelationType.GENERALIZATION
+    )
 
     return from_classes + to_classes
 
@@ -319,9 +335,8 @@ def _get_package_version(package_id, uml_project, visited=None) -> Optional[str]
     if package_id in visited:
         return None
     visited = visited.union({package_id})
-    classes_in_pkg = [c for c in uml_project.classes.by_id.values() if c.package == package_id]
-    for c in classes_in_pkg:
-        if 'CIMVersion' in c.name:
+    for c in uml_project.classes.by_package.get(package_id, []):
+        if c.name and 'CIMVersion' in c.name:
             for attr in c.attributes:
                 if attr.name == 'version' and attr.default:
                     return attr.default

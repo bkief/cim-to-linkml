@@ -59,9 +59,15 @@ class TestCardinalityParsing:
         assert card.upper_bound == "*"
 
     def test_parse_cardinality_single_val(self):
+        # UML "1" means exactly one.
         card = parse_cardinality("1")
         assert card.lower_bound == 1
-        assert card.upper_bound == 0
+        assert card.upper_bound == 1
+
+    def test_parse_cardinality_single_wildcard(self):
+        card = parse_cardinality("*")
+        assert card.lower_bound == 0
+        assert card.upper_bound == "*"
 
 
 class TestDateTimeParsing:
@@ -114,6 +120,7 @@ class TestModelParsing:
             "dest_role_note": "Children note",
         }
         rel = parse_uml_relation(rel_row)
+        assert rel is not None
         assert rel.id == 201
         assert rel.type == uml_model.RelationType.ASSOCIATION
         assert rel.source_class == 10
@@ -141,8 +148,26 @@ class TestModelParsing:
             "dest_role_note": None,
         }
         rel = parse_uml_relation(rel_row)
+        assert rel is not None
         assert rel.direction is None
         assert rel.type == uml_model.RelationType.GENERALIZATION
+
+    def test_parse_uml_relation_unsupported_type_is_skipped(self):
+        # EA connector types such as `Abstraction' (present in CIM18) must not crash parsing.
+        rel_row = {
+            "id": 203,
+            "type": "Abstraction",
+            "start_object_id": 10,
+            "end_object_id": 20,
+            "direction": "Source -> Destination",
+            "source_card": None,
+            "source_role": None,
+            "source_role_note": None,
+            "dest_card": None,
+            "dest_role": None,
+            "dest_role_note": None,
+        }
+        assert parse_uml_relation(rel_row) is None
 
     def test_parse_uml_class_with_attributes(self):
         class_rows = [

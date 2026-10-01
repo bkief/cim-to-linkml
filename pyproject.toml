@@ -19,7 +19,15 @@ cim2linkml = "cim_to_linkml.main:cli"
 dev = [
     "isort>=5.13.2",
     "pyright>=1.1.356",
+    "pytest>=8.0.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.pyright]
+include = ["cim_to_linkml", "tests"]
+exclude = ["scratch", "**/__pycache__"]
 
 [build-system]
 requires = ["hatchling"]

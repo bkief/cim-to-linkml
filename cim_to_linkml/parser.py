@@ -1,16 +1,24 @@
-import sqlite3
+import logging
 from datetime import datetime
 from itertools import groupby
 from operator import itemgetter
+from typing import Any, Iterable, Mapping, Sequence
 
 import cim_to_linkml.uml_model as uml_model
+
+logger = logging.getLogger(__name__)
 
 
 def parse_cardinality(val: str | None) -> uml_model.Cardinality:
     if val is None:
         return uml_model.Cardinality()
 
-    lb, _, ub = val.partition("..")
+    lb, sep, ub = val.partition("..")
+    if not sep:
+        # A single value (e.g. "1" or "*") denotes both bounds.
+        if lb.strip() in ("*", "n"):
+            return uml_model.Cardinality(lower_bound=0, upper_bound="*")
+        ub = lb
 
     return uml_model.Cardinality(
         lower_bound=parse_cardinality_val(lb),
@@ -36,9 +44,9 @@ def parse_iso_datetime_val(val: str | None) -> datetime:
 
 
 def parse_uml_project(
-    uml_package_results: sqlite3.Cursor,
-    uml_class_results: sqlite3.Cursor,
-    uml_relation_results: sqlite3.Cursor,
+    uml_package_results: Iterable[Any],
+    uml_class_results: Iterable[Any],
+    uml_relation_results: Iterable[Any],
 ) -> uml_model.Project:
     uml_packages = uml_model.Packages({parse_uml_package(pkg_row) for pkg_row in uml_package_results})
     uml_classes = uml_model.Classes(
@@ -47,6 +55,8 @@ def parse_uml_project(
     uml_relations = set()
     for rel_row in uml_relation_results:
         rel = parse_uml_relation(rel_row)
+        if rel is None:
+            continue
         if rel.source_class in uml_classes.by_id and rel.dest_class in uml_classes.by_id:
             uml_relations.add(rel)
     uml_relations = uml_model.Relations(uml_relations)
@@ -56,7 +66,7 @@ def parse_uml_project(
     return uml_project
 
 
-def parse_uml_package(package_row: sqlite3.Cursor) -> uml_model.Package:
+def parse_uml_package(package_row: Any) -> uml_model.Package:
     uml_package = dict(package_row)
 
     return uml_model.Package(
@@ -70,8 +80,15 @@ def parse_uml_package(package_row: sqlite3.Cursor) -> uml_model.Package:
     )
 
 
-def parse_uml_relation(relation_row: sqlite3.Cursor) -> uml_model.Relation:
+def parse_uml_relation(relation_row: Any) -> uml_model.Relation | None:
     uml_relation = dict(relation_row)
+
+    try:
+        type_ = uml_model.RelationType(uml_relation["type"])
+    except ValueError:
+        # Connector types not relevant to the schema (e.g. `Abstraction', `Realisation') are skipped.
+        logger.debug(f"Skipping relation {uml_relation['id']} of unsupported type `{uml_relation['type']}'.")
+        return None
 
     try:
         direction = uml_model.RelationDirection(uml_relation["direction"])
@@ -80,7 +97,7 @@ def parse_uml_relation(relation_row: sqlite3.Cursor) -> uml_model.Relation:
 
     return uml_model.Relation(
         id=uml_relation["id"],
-        type=uml_model.RelationType(uml_relation["type"]),
+        type=type_,
         source_class=uml_relation["start_object_id"],
         dest_class=uml_relation["end_object_id"],
         direction=direction,
@@ -93,7 +110,7 @@ def parse_uml_relation(relation_row: sqlite3.Cursor) -> uml_model.Relation:
     )
 
 
-def _parse_uml_class_attr(attr: dict) -> uml_model.Attribute:
+def _parse_uml_class_attr(attr: Mapping[str, Any]) -> uml_model.Attribute:
     try:
         stereotype = uml_model.AttributeStereotype(attr["attr_stereotype"])
     except ValueError:
@@ -112,7 +129,7 @@ def _parse_uml_class_attr(attr: dict) -> uml_model.Attribute:
     )
 
 
-def parse_uml_class(class_rows: list[sqlite3.Cursor]) -> uml_model.Class:
+def parse_uml_class(class_rows: Sequence[Any]) -> uml_model.Class:
     class_rows_ = [dict(row) for row in class_rows]
     try:
         stereotype = uml_model.ClassStereotype(class_rows_[0]["class_stereotype"])

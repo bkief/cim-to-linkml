@@ -30,7 +30,7 @@ class TestReadRdfModels:
 
         # Verify no blank nodes exist in class IDs
         for cls in project.classes.by_id.values():
-            assert not cls.id.startswith("N"), f"Blank node found as class ID: {cls.id}"
+            assert not str(cls.id).startswith("N"), f"Blank node found as class ID: {cls.id}"
             assert cls.id != str(OWL.Thing), "owl:Thing should be excluded from classes"
             assert cls.name, "Class name must not be empty"
 
@@ -102,3 +102,21 @@ class TestReadRdfModels:
         corrupt_file.write_text("<<<INVALID XML CONTENT>>>")
         with pytest.raises(Exception):
             read_rdf_project(str(corrupt_file))
+
+    def test_rdfs_association_ends_are_paired(self, test_data_dir: Path):
+        # Each RDFS association end is a property linked to its counterpart via `cims:inverseRoleName'.
+        # They must form one relation, with each end's own name and multiplicity, and no invented slots.
+        from cim_to_linkml.generator import generate_class
+
+        project = read_rdf_project(str(test_data_dir / "CGMES_Topology_RDFS2020.rdfs"))
+        terminal = generate_class(project.classes.by_name["Terminal"], project)
+        topo_node = generate_class(project.classes.by_name["TopologicalNode"], project)
+        assert terminal.attributes is not None and topo_node.attributes is not None
+
+        assert set(terminal.attributes) == {"TopologicalNode"}
+        assert terminal.attributes["TopologicalNode"].range == "TopologicalNode"
+        assert not terminal.attributes["TopologicalNode"].multivalued
+
+        assert "TopologicalNode" not in topo_node.attributes
+        assert topo_node.attributes["Terminal"].range == "Terminal"
+        assert topo_node.attributes["Terminal"].multivalued

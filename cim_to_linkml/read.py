@@ -33,7 +33,7 @@ def read_uml_relations(conn: sqlite3.Connection) -> sqlite3.Cursor:
             DestRoleNote AS dest_role_note
         FROM t_connector
 
-        WHERE type  NOT IN ("Dependency", "NoteLink")
+        WHERE Connector_Type NOT IN ('Dependency', 'NoteLink')
 
         ORDER BY id
         """
@@ -55,14 +55,14 @@ def read_uml_packages(conn: sqlite3.Connection) -> sqlite3.Cursor:
             Package.Parent_ID AS parent_id,
             Package.CreatedDate AS created_date,
             Package.ModifiedDate AS modified_date,
-            -- Package.Notes AS notes, -- TODO: Using `Object.note`, but which one is the better choice?
-            Object.author as author,
-            Object.Note as note
+            Object.Author AS author,
+            Object.Note AS note
         FROM t_package AS Package
 
+        -- A package's element row references it through PDATA1 (its Object_ID is unrelated).
         LEFT JOIN t_object AS Object
-        ON Package.Package_ID = Object.Object_ID
-        AND Object.Object_Type = "Package"
+        ON Object.PDATA1 = CAST(Package.Package_ID AS TEXT)
+        AND Object.Object_Type = 'Package'
 
         ORDER BY id
         """
@@ -100,7 +100,7 @@ def read_uml_classes(conn: sqlite3.Connection) -> sqlite3.Cursor:
         LEFT JOIN t_attribute AS Attribute
         ON Class.Object_ID = Attribute.Object_ID
 
-        WHERE Class.Object_Type = "Class"
+        WHERE Class.Object_Type = 'Class'
 
         ORDER BY Class.Object_ID, Attribute.Name
         """

@@ -19,10 +19,12 @@ class TestGeneratorHelpers:
         assert _map_primitive_data_type("Float") == "float"
         assert _map_primitive_data_type("Integer") == "integer"
         assert _map_primitive_data_type("Boolean") == "boolean"
-        assert _map_primitive_data_type("DateTime") == "date"
+        assert _map_primitive_data_type("DateTime") == "datetime"
         assert _map_primitive_data_type("Date") == "date"
         assert _map_primitive_data_type("Time") == "time"
-        assert _map_primitive_data_type("Decimal") == "double"
+        assert _map_primitive_data_type("Decimal") == "decimal"
+        assert _map_primitive_data_type("Duration") == "string"
+        assert _map_primitive_data_type("MonthDay") == "string"
 
     def test_map_primitive_data_type_invalid(self):
         with pytest.raises(TypeError, match="is not a CIM Primitive"):

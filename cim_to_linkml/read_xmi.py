@@ -1,12 +1,14 @@
 import logging
 from datetime import datetime
-from lxml import etree
-from typing import Iterable, Any
+from typing import Any, Iterable
+
+from lxml import etree  # type: ignore
+
 import cim_to_linkml.uml_model as uml_model
 
 logger = logging.getLogger(__name__)
 
-def read_xmi_project(file_path: str) -> tuple[Iterable[dict], Iterable[dict], Iterable[dict]]:
+def read_xmi_project(file_path: str) -> tuple[list[dict], list[dict], list[dict]]:
     tree = etree.parse(file_path)
     root = tree.getroot()
 
@@ -31,11 +33,14 @@ class XMI11Parser:
         self.ns = {"UML": "omg.org/UML1.3"}
 
     def _get_tagged_value(self, element: etree._Element, tag: str) -> str | None:
-        for tv in element.xpath(f'.//UML:TaggedValue[@tag="{tag}"]', namespaces=self.ns):
+        # Only the element's own tagged values; a descendant search would pick up those of nested elements.
+        for tv in element.xpath(
+            f'./UML:ModelElement.taggedValue/UML:TaggedValue[@tag="{tag}"]', namespaces=self.ns
+        ):
             return tv.attrib.get("value")
         return None
 
-    def parse_packages(self) -> Iterable[dict]:
+    def parse_packages(self) -> list[dict]:
         packages = []
         for pkg_elem in self.root.xpath('//UML:Package', namespaces=self.ns):
             pkg_id = pkg_elem.attrib.get("xmi.id")
@@ -53,7 +58,7 @@ class XMI11Parser:
             })
         return packages
 
-    def parse_classes(self) -> Iterable[dict]:
+    def parse_classes(self) -> list[dict]:
         # First pass to collect element names for ID resolution
         element_names = {}
         for elem in self.root.xpath('//*[@xmi.id]', namespaces=self.ns):
@@ -105,6 +110,9 @@ class XMI11Parser:
                     attr_type_elem = attr.xpath('.//UML:Classifier', namespaces=self.ns)
                     attr_type_id = attr_type_elem[0].attrib.get("xmi.idref") if attr_type_elem else self._get_tagged_value(attr, "type")
                     attr_type = element_names.get(attr_type_id, attr_type_id)
+
+                    initial_elem = attr.xpath('./UML:Attribute.initialValue/UML:Expression', namespaces=self.ns)
+                    attr_default = initial_elem[0].attrib.get("body") if initial_elem else None
                     
                     classes.append({
                         "class_id": cls_id, "class_name": cls_name, "class_author": author,
@@ -113,11 +121,11 @@ class XMI11Parser:
                         "class_note": note,
                         "attr_id": str(attr_id), "attr_name": attr_name, "attr_lower_bound": lb_tv,
                         "attr_upper_bound": ub_tv, "attr_type": attr_type, "attr_notes": attr_note,
-                        "attr_stereotype": attr_st, "attr_default": None
+                        "attr_stereotype": attr_st, "attr_default": attr_default
                     })
         return classes
 
-    def parse_relations(self) -> Iterable[dict]:
+    def parse_relations(self) -> list[dict]:
         relations = []
         for rel_elem in self.root.xpath('//UML:Association', namespaces=self.ns):
             rel_id = rel_elem.attrib.get("xmi.id")
@@ -151,8 +159,9 @@ class XMI11Parser:
                 
         for gen_elem in self.root.xpath('//UML:Generalization', namespaces=self.ns):
             rel_id = gen_elem.attrib.get("xmi.id")
-            child = gen_elem.attrib.get("child")
-            parent = gen_elem.attrib.get("parent")
+            # Enterprise Architect writes `subtype'/`supertype'; UML 1.3 proper uses `child'/`parent'.
+            child = gen_elem.attrib.get("child") or gen_elem.attrib.get("subtype")
+            parent = gen_elem.attrib.get("parent") or gen_elem.attrib.get("supertype")
             
             if not child or not parent:
                 child_elem = gen_elem.xpath('./UML:Generalization.child/UML:Class', namespaces=self.ns)
@@ -171,51 +180,104 @@ class XMI11Parser:
         return relations
 
 class XMI21Parser:
+    XMI_ID = "{http://schema.omg.org/spec/XMI/2.1}id"
+    XMI_IDREF = "{http://schema.omg.org/spec/XMI/2.1}idref"
+
     def __init__(self, root: etree._Element):
         self.root = root
         self.ns = {"xmi": "http://schema.omg.org/spec/XMI/2.1", "uml": "http://schema.omg.org/spec/UML/2.1.1"}
         # Map EA IDs back to their element for resolving packages, etc
-        self.elements_by_id = {elem.attrib.get("{http://schema.omg.org/spec/XMI/2.1}id"): elem for elem in self.root.xpath('//*[@xmi:id]', namespaces=self.ns)}
+        self.elements_by_id = {elem.attrib.get(self.XMI_ID): elem for elem in self.root.xpath('//*[@xmi:id]', namespaces=self.ns)}
         self.element_names = {k: v.attrib.get("name") for k, v in self.elements_by_id.items()}
+        # Enterprise Architect stores stereotypes, documentation, authors, dates and initial values
+        # in its own `xmi:Extension' section rather than in the UML model itself.
+        self.ext_elements = {
+            elem.attrib.get(self.XMI_IDREF): elem
+            for elem in self.root.xpath('/xmi:XMI/xmi:Extension/elements/element', namespaces=self.ns)
+        }
+        self.ext_attributes = {
+            elem.attrib.get(self.XMI_IDREF): elem
+            for elem in self.root.xpath('/xmi:XMI/xmi:Extension/elements/element/attributes/attribute', namespaces=self.ns)
+        }
 
-    def parse_packages(self) -> Iterable[dict]:
+    @staticmethod
+    def _ext_value(ext_elem: etree._Element | None, path: str, attr: str) -> str | None:
+        if ext_elem is None:
+            return None
+        found = ext_elem.find(path)
+        value = found.attrib.get(attr) if found is not None else None
+        return value or None
+
+    def _element_info(self, elem_id: str | None) -> dict:
+        ext = self.ext_elements.get(elem_id)
+        return {
+            "note": self._ext_value(ext, "properties", "documentation"),
+            "stereotype": self._ext_value(ext, "properties", "stereotype"),
+            "author": self._ext_value(ext, "project", "author"),
+            "created_date": self._ext_value(ext, "project", "created") or datetime.now().isoformat(),
+            "modified_date": self._ext_value(ext, "project", "modified") or datetime.now().isoformat(),
+        }
+
+    def parse_packages(self) -> list[dict]:
         packages = []
         for pkg_elem in self.root.xpath('//packagedElement[@xmi:type="uml:Package"]', namespaces=self.ns):
-            pkg_id = pkg_elem.attrib.get("{http://schema.omg.org/spec/XMI/2.1}id")
+            pkg_id = pkg_elem.attrib.get(self.XMI_ID)
             name = pkg_elem.attrib.get("name")
             parent = pkg_elem.getparent()
-            parent_id = parent.attrib.get("{http://schema.omg.org/spec/XMI/2.1}id") if parent is not None else None
-            
+            parent_id = parent.attrib.get(self.XMI_ID) if parent is not None else None
+            info = self._element_info(pkg_id)
+
             packages.append({
                 "id": pkg_id, "name": name, "parent_id": parent_id,
-                "created_date": datetime.now().isoformat(), "modified_date": datetime.now().isoformat(),
-                "author": None, "note": None,
+                "created_date": info["created_date"], "modified_date": info["modified_date"],
+                "author": info["author"], "note": info["note"],
             })
         return packages
 
-    def parse_classes(self) -> Iterable[dict]:
+    def parse_classes(self) -> list[dict]:
         classes = []
-        for cls_elem in self.root.xpath('//packagedElement[@xmi:type="uml:Class" or @xmi:type="uml:DataType" or @xmi:type="uml:Enumeration" or @xmi:type="uml:PrimitiveType"]', namespaces=self.ns):
-            cls_id = cls_elem.attrib.get("{http://schema.omg.org/spec/XMI/2.1}id")
+        classifier_types = '@xmi:type="uml:Class" or @xmi:type="uml:DataType" or @xmi:type="uml:Enumeration" or @xmi:type="uml:PrimitiveType"'
+        for cls_elem in self.root.xpath(
+            f'//packagedElement[{classifier_types}] | //nestedClassifier[{classifier_types}]', namespaces=self.ns
+        ):
+            cls_id = cls_elem.attrib.get(self.XMI_ID)
             cls_name = cls_elem.attrib.get("name")
-            parent = cls_elem.getparent()
-            pkg_id = parent.attrib.get("{http://schema.omg.org/spec/XMI/2.1}id") if parent is not None else None
-            
-            stereotype = None
-            attrs = cls_elem.xpath('.//ownedAttribute[@xmi:type="uml:Property"]', namespaces=self.ns)
+            if not cls_name:
+                continue
+            # EA exports diagram notes, text and boundaries as `uml:Class' too; its extension data has the real type.
+            ext = self.ext_elements.get(cls_id)
+            if ext is not None and ext.attrib.get("{http://schema.omg.org/spec/XMI/2.1}type") not in (
+                "uml:Class", "uml:DataType", "uml:Enumeration", "uml:PrimitiveType"
+            ):
+                continue
+            # Nested classifiers belong to the package of their owning class.
+            pkg_elem = next(
+                (a for a in cls_elem.iterancestors()
+                 if a.attrib.get("{http://schema.omg.org/spec/XMI/2.1}type") == "uml:Package"),
+                None,
+            )
+            pkg_id = pkg_elem.attrib.get(self.XMI_ID) if pkg_elem is not None else None
+            info = self._element_info(cls_id)
+            class_row = {
+                "class_id": cls_id, "class_name": cls_name, "class_author": info["author"],
+                "class_package_id": pkg_id, "class_created_date": info["created_date"],
+                "class_modified_date": info["modified_date"], "class_stereotype": info["stereotype"],
+                "class_note": info["note"],
+            }
+
+            attrs = cls_elem.xpath(
+                './ownedAttribute[@xmi:type="uml:Property"] | ./ownedLiteral', namespaces=self.ns
+            )
             if not attrs:
                 classes.append({
-                    "class_id": cls_id, "class_name": cls_name, "class_author": None,
-                    "class_package_id": pkg_id, "class_created_date": datetime.now().isoformat(),
-                    "class_modified_date": datetime.now().isoformat(), "class_stereotype": stereotype,
-                    "class_note": None,
+                    **class_row,
                     "attr_id": None, "attr_name": None, "attr_lower_bound": None,
                     "attr_upper_bound": None, "attr_type": None, "attr_notes": None,
                     "attr_stereotype": None, "attr_default": None
                 })
             else:
                 for attr in attrs:
-                    attr_id = attr.attrib.get("{http://schema.omg.org/spec/XMI/2.1}id")
+                    attr_id = attr.attrib.get(self.XMI_ID)
                     attr_name = attr.attrib.get("name")
                     
                     lb_elem = attr.xpath('./lowerValue', namespaces=self.ns)
@@ -224,21 +286,22 @@ class XMI21Parser:
                     ub = ub_elem[0].attrib.get("value") if ub_elem else None
                     
                     type_elem = attr.xpath('./type', namespaces=self.ns)
-                    attr_type_id = type_elem[0].attrib.get("{http://schema.omg.org/spec/XMI/2.1}idref") if type_elem else None
+                    attr_type_id = type_elem[0].attrib.get(self.XMI_IDREF) if type_elem else None
                     attr_type = self.element_names.get(attr_type_id, attr_type_id)
+
+                    attr_ext = self.ext_attributes.get(attr_id)
                     
                     classes.append({
-                        "class_id": cls_id, "class_name": cls_name, "class_author": None,
-                        "class_package_id": pkg_id, "class_created_date": datetime.now().isoformat(),
-                        "class_modified_date": datetime.now().isoformat(), "class_stereotype": stereotype,
-                        "class_note": None,
+                        **class_row,
                         "attr_id": attr_id, "attr_name": attr_name, "attr_lower_bound": lb,
-                        "attr_upper_bound": ub, "attr_type": attr_type, "attr_notes": None,
-                        "attr_stereotype": None, "attr_default": None
+                        "attr_upper_bound": ub, "attr_type": attr_type,
+                        "attr_notes": self._ext_value(attr_ext, "documentation", "value"),
+                        "attr_stereotype": self._ext_value(attr_ext, "stereotype", "stereotype"),
+                        "attr_default": self._ext_value(attr_ext, "initial", "body"),
                     })
         return classes
 
-    def parse_relations(self) -> Iterable[dict]:
+    def parse_relations(self) -> list[dict]:
         relations = []
         for rel_elem in self.root.xpath('//packagedElement[@xmi:type="uml:Association"]', namespaces=self.ns):
             rel_id = rel_elem.attrib.get("{http://schema.omg.org/spec/XMI/2.1}id")

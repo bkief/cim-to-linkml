@@ -43,7 +43,8 @@ def mock_ea_sqlite_conn() -> Generator[sqlite3.Connection, None, None]:
             CreatedDate TEXT,
             ModifiedDate TEXT,
             Stereotype TEXT,
-            Note TEXT
+            Note TEXT,
+            PDATA1 TEXT
         )
         """
     )
@@ -88,7 +89,9 @@ def mock_ea_sqlite_conn() -> Generator[sqlite3.Connection, None, None]:
         "INSERT INTO t_package VALUES (1, 'Core', 0, '2026-01-01', '2026-01-02')"
     )
     cur.execute(
-        "INSERT INTO t_object (Object_ID, Package_ID, Name, Object_Type, Note) VALUES (1, 0, 'Core', 'Package', 'Core package')"
+        # As in real EA files, a package's object row links to it via PDATA1, not via its Object_ID.
+        "INSERT INTO t_object (Object_ID, Package_ID, Name, Author, Object_Type, Note, PDATA1) "
+        "VALUES (5, 0, 'Core', 'TC57', 'Package', 'Core package', '1')"
     )
 
     # Insert test class
@@ -127,6 +130,9 @@ class TestReadQea:
         assert isinstance(project, uml_model.Project)
         assert len(project.packages.by_id) == 1
         assert "Core" in project.packages.by_qualified_name
+        core = project.packages.by_qualified_name["Core"]
+        assert core.notes == "Core package"
+        assert core.author == "TC57"
 
         assert len(project.classes.by_id) == 2
         terminal = project.classes.by_name.get("Terminal")

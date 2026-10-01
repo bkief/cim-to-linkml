@@ -1,10 +1,11 @@
+import logging
 import os
 from datetime import datetime
 from enum import Enum
 from functools import cached_property, lru_cache
 from itertools import groupby
 from operator import attrgetter, itemgetter
-from typing import Literal, NamedTuple, Optional
+from typing import Iterable, Literal, NamedTuple, Optional
 
 ObjectID = int | str
 ConnectorID = int | str
@@ -17,6 +18,8 @@ Many = Literal["*"]
 CardinalityValue = int | Many
 
 QEAFile = os.PathLike | str
+
+logger = logging.getLogger(__name__)
 
 
 class Cardinality(NamedTuple):
@@ -49,6 +52,7 @@ class ClassStereotype(Enum):
     ENUMERATION = "enumeration"
     COMPOUND = "Compound"
     IMAGE = "Image"
+    DATATYPE = "CIMDatatype"
 
 
 class AttributeStereotype(Enum):
@@ -103,10 +107,13 @@ class Relation(NamedTuple):
     dest_card: Cardinality = Cardinality()
     dest_role: Optional[str] = None
     dest_role_note: Optional[str] = None
+    # False when only the source -> destination end is known (e.g. an RDF property without an inverse),
+    # in which case no slot is generated on the destination class.
+    bidirectional: bool = True
 
 
 class Classes:
-    def __init__(self, classes):
+    def __init__(self, classes: Iterable[Class]):
         self._data = classes
 
     @cached_property
@@ -122,8 +129,8 @@ class Classes:
             classes = list(sorted(classes, key=lambda x: str(x.id) if x.id is not None else ""))
             class_ = classes[0]
             if len(classes) > 1:
-                print(
-                    f"Multiple classes with name {name}. Choosing one (object ID: {class_[0]}) "
+                logger.warning(
+                    f"Multiple classes with name {name}. Choosing one (object ID: {class_.id}) "
                     f"and skipping the others (object IDs: {', '.join(str(c.id) for c in classes[1:])})."
                 )
             classes_by_name[name] = class_
@@ -135,15 +142,15 @@ class Classes:
         key = lambda x: str(x.package) if x.package is not None else ""
 
         classes_by_package = {}
-        for package_id, classes in groupby(sorted(self._data, key=key), key=key):
-            classes = list(sorted(classes, key=lambda x: str(x.id) if x.id is not None else ""))
-            classes_by_package[package_id] = classes
+        for _, group in groupby(sorted(self._data, key=key), key=key):
+            cls_list = list(sorted(group, key=lambda x: str(x.id) if x.id is not None else ""))
+            classes_by_package[cls_list[0].package] = cls_list
 
         return classes_by_package
 
 
 class Relations:
-    def __init__(self, relations):
+    def __init__(self, relations: Iterable[Relation]):
         self._data = relations
 
     @cached_property
@@ -155,9 +162,9 @@ class Relations:
         key = lambda x: str(x.source_class) if x.source_class is not None else ""
 
         relations_by_source_class = {}
-        for source_class, relations in groupby(sorted(self._data, key=key), key=key):
-            relations = list(sorted(relations, key=lambda x: str(x.id) if x.id is not None else ""))
-            relations_by_source_class[source_class] = relations
+        for _, group in groupby(sorted(self._data, key=key), key=key):
+            rel_list = list(sorted(group, key=lambda x: str(x.id) if x.id is not None else ""))
+            relations_by_source_class[rel_list[0].source_class] = rel_list
 
         return relations_by_source_class
 
@@ -166,15 +173,15 @@ class Relations:
         key = lambda x: str(x.dest_class) if x.dest_class is not None else ""
 
         relations_by_dest_class = {}
-        for dest_class, relations in groupby(sorted(self._data, key=key), key=key):
-            relations = list(sorted(relations, key=lambda x: str(x.id) if x.id is not None else ""))
-            relations_by_dest_class[dest_class] = relations
+        for _, group in groupby(sorted(self._data, key=key), key=key):
+            rel_list = list(sorted(group, key=lambda x: str(x.id) if x.id is not None else ""))
+            relations_by_dest_class[rel_list[0].dest_class] = rel_list
 
         return relations_by_dest_class
 
 
 class Packages:
-    def __init__(self, packages):
+    def __init__(self, packages: Iterable[Package]):
         self._data = packages
 
     @cached_property
@@ -185,12 +192,12 @@ class Packages:
     def by_qualified_name(self):
         return {self.get_qualified_name(p_id): p for p_id, p in self.by_id.items()}
 
-    @lru_cache(maxsize=173)
+    @lru_cache(maxsize=None)
     def get_qualified_name(self, package_id):
         return ".".join(self._get_package_path(package_id))
 
     def is_leaf_package(self, qname: str):
-        return len([qn for qn in self.by_qualified_name if qn.startswith(qname)]) == 1
+        return len([qn for qn in self.by_qualified_name if is_package_or_subpackage(qn, qname)]) == 1
 
     def _get_package_path(self, start_pkg_id, package_path=None, visited=None):
         if package_path is None:
@@ -210,6 +217,11 @@ class Packages:
             return [package.name] + package_path
 
         return self._get_package_path(package.parent, [package.name] + package_path, visited)
+
+
+def is_package_or_subpackage(qname: str, package_qname: str) -> bool:
+    """True if `qname' is `package_qname' itself or nested in it (`Base.Core' is not inside `Base.Co')."""
+    return qname == package_qname or qname.startswith(package_qname + ".")
 
 
 class Project:

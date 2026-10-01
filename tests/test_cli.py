@@ -3,7 +3,8 @@ import pytest
 from click.testing import CliRunner
 import yaml
 
-from cim_to_linkml.main import cli
+from cim_to_linkml.main import _resolve_package, cli
+from cim_to_linkml.uml_model import is_package_or_subpackage
 
 
 class TestCLI:
@@ -130,3 +131,30 @@ class TestCLI:
         assert "Ignoring unknown package: `NonExistentPackage'" in result.output
         assert "Available packages:" in result.output
         assert "'Wires'" in result.output
+
+
+class TestPackageResolution:
+    QNAMES = ["Model", "Model.TC57CIM", "Model.TC57CIM.IEC61970", "Model.TC57CIM.IEC61970.Base.Core"]
+
+    def test_exact_match(self):
+        assert _resolve_package("Model.TC57CIM", self.QNAMES) == "Model.TC57CIM"
+
+    def test_suffix_match_for_ea_model_root(self):
+        # Enterprise Architect exports nest everything under a `Model' root package.
+        assert _resolve_package("TC57CIM", self.QNAMES) == "Model.TC57CIM"
+        assert _resolve_package("IEC61970.Base.Core", self.QNAMES) == "Model.TC57CIM.IEC61970.Base.Core"
+
+    def test_default_falls_back_to_single_package(self):
+        assert _resolve_package("TC57CIM", ["TopologyProfile"]) == "TopologyProfile"
+
+    def test_unknown(self):
+        assert _resolve_package("Wires", self.QNAMES) is None
+
+    def test_ambiguous_suffix_is_rejected(self):
+        assert _resolve_package("Assets", ["A.Assets", "B.Assets"]) is None
+
+
+def test_is_package_or_subpackage():
+    assert is_package_or_subpackage("TC57CIM.Base.Core", "TC57CIM.Base")
+    assert is_package_or_subpackage("TC57CIM.Base", "TC57CIM.Base")
+    assert not is_package_or_subpackage("TC57CIM.BaseExt", "TC57CIM.Base")
